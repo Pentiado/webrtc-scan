@@ -60,7 +60,7 @@ export default class AudioTest {
   private scriptNode : any;
 
   constructor(config : AudioTestConfig) {
-    this.config = {...this.config, config};
+    this.config = {...this.config, ...config};
   }
 
   async run() {

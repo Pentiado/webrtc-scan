@@ -1,190 +1,173 @@
-/*
- *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
- *
- *  Use of this source code is governed by a BSD-style license
- *  that can be found in the LICENSE file in the root of the source
- *  tree.
- */
-'use strict';
+import StatisticsAggregate from './stats';
+import Connection from '../connection';
 
 // Creates a loopback via relay candidates and tries to send as many packets
 // with 1024 chars as possible while keeping dataChannel bufferedAmmount above
 // zero.
-addTest(testSuiteName.THROUGHPUT, testCaseName.DATATHROUGHPUT, function(test) {
-  var dataChannelThroughputTest = new DataChannelThroughputTest(test);
-  dataChannelThroughputTest.run();
-});
+// addTest(testSuiteName.THROUGHPUT, testCaseName.DATATHROUGHPUT, function(test) {
+//   var dataChannelThroughputTest = new DataChannelThroughputTest(test);
+//   dataChannelThroughputTest.run();
+// });
 
-function DataChannelThroughputTest(test) {
-  this.test = test;
-  this.testDurationSeconds = 5.0;
-  this.startTime = null;
-  this.sentPayloadBytes = 0;
-  this.receivedPayloadBytes = 0;
-  this.stopSending = false;
-  this.samplePacket = '';
-
-  for (var i = 0; i !== 1024; ++i) {
-    this.samplePacket += 'h';
-  }
-
-  this.maxNumberOfPacketsToSend = 1;
-  this.bytesToKeepBuffered = 1024 * this.maxNumberOfPacketsToSend;
-  this.lastBitrateMeasureTime = null;
-  this.lastReceivedPayloadBytes = 0;
-
-  this.call = null;
-  this.senderChannel = null;
-  this.receiveChannel = null;
+interface DataChannelThroughputConfig {
+  testDurationSeconds: number,
+  maxNumberOfPacketsToSend: number
 }
 
-DataChannelThroughputTest.prototype = {
-  run: function() {
-    Call.asyncCreateTurnConfig(this.start.bind(this),
-      this.test.reportFatal.bind(this.test));
-  },
+export class DataChannelThroughputTest {
+  private config : DataChannelThroughputConfig = {
+    testDurationSeconds: 5,
+    maxNumberOfPacketsToSend: 1
+  };
 
-  start: function(config) {
-    this.call = new Call(config, this.test);
-    this.call.setIceCandidateFilter(Call.isRelay);
-    this.senderChannel = this.call.pc1.createDataChannel(null);
+  private connection: Connection;
+  private startTime : number;
+  private sentPayloadBytes = 0;
+  private receivedPayloadBytes = 0;
+  private stopSending = false;
+  private samplePacket = new Array(1024).fill('h').join('');
+
+  private senderChannel: any;
+  private receiveChannel: any;
+  private bytesToKeepBuffered: number;
+  private lastBitrateMeasureTime: number;
+  private lastReceivedPayloadBytes: number;
+
+  constructor(config : DataChannelThroughputConfig) {
+    this.config = {...this.config, ...config};
+  }
+
+  run() {
+    this.bytesToKeepBuffered = 1024 * this.config.maxNumberOfPacketsToSend;
+    this.lastBitrateMeasureTime = 0;
+    this.lastReceivedPayloadBytes = 0;
+    Connection.createTurnConfig().then(this.start.bind(this), this.test.reportFatal.bind(this.test));
+  }
+
+  start(config) {
+    this.connection = new Connection(config, 'relay');
+    this.senderChannel = this.connection.pc1.createDataChannel(null);
     this.senderChannel.addEventListener('open', this.sendingStep.bind(this));
+    this.connection.pc2.addEventListener('datachannel', this.onReceiverChannel.bind(this));
+    this.connection.establishConnection();
+  }
 
-    this.call.pc2.addEventListener('datachannel',
-      this.onReceiverChannel.bind(this));
-
-    this.call.establishConnection();
-  },
-
-  onReceiverChannel: function(event) {
+  private onReceiverChannel(event : any) {
     this.receiveChannel = event.channel;
-    this.receiveChannel.addEventListener('message',
-      this.onMessageReceived.bind(this));
-  },
+    this.receiveChannel.addEventListener('message', this.onMessageReceived.bind(this));
+  }
 
-  sendingStep: function() {
-    var now = new Date();
+  sendingStep() {
+    const now = Date.now();
     if (!this.startTime) {
       this.startTime = now;
       this.lastBitrateMeasureTime = now;
     }
 
-    for (var i = 0; i !== this.maxNumberOfPacketsToSend; ++i) {
-      if (this.senderChannel.bufferedAmount >= this.bytesToKeepBuffered) {
-        break;
-      }
+    for (let i = 0; i !== this.config.maxNumberOfPacketsToSend; ++i) {
+      if (this.senderChannel.bufferedAmount >= this.bytesToKeepBuffered) break;
       this.sentPayloadBytes += this.samplePacket.length;
       this.senderChannel.send(this.samplePacket);
     }
 
-    if (now - this.startTime >= 1000 * this.testDurationSeconds) {
-      this.test.setProgress(100);
+    if (now - this.startTime >= 1000 * this.config.testDurationSeconds) {
       this.stopSending = true;
     } else {
-      this.test.setProgress((now - this.startTime) /
-        (10 * this.testDurationSeconds));
       setTimeout(this.sendingStep.bind(this), 1);
     }
-  },
+  }
 
-  onMessageReceived: function(event) {
+  onMessageReceived(event) {
     this.receivedPayloadBytes += event.data.length;
-    var now = new Date();
+    const now = Date.now();
+
     if (now - this.lastBitrateMeasureTime >= 1000) {
-      var bitrate = (this.receivedPayloadBytes -
-        this.lastReceivedPayloadBytes) / (now - this.lastBitrateMeasureTime);
-      bitrate = Math.round(bitrate * 1000 * 8) / 1000;
-      this.test.reportSuccess('Transmitting at ' + bitrate + ' kbps.');
+      const x = (this.receivedPayloadBytes - this.lastReceivedPayloadBytes) / (now - this.lastBitrateMeasureTime);
+      const bitrate = Math.round(x * 1000 * 8) / 1000;
+      this.test.reportSuccess(`Transmitting at ${bitrate} kbps.`);
       this.lastReceivedPayloadBytes = this.receivedPayloadBytes;
       this.lastBitrateMeasureTime = now;
     }
-    if (this.stopSending &&
-      this.sentPayloadBytes === this.receivedPayloadBytes) {
-      this.call.close();
-      this.call = null;
 
-      var elapsedTime = Math.round((now - this.startTime) * 10) / 10000.0;
-      var receivedKBits = this.receivedPayloadBytes * 8 / 1000;
-      this.test.reportSuccess('Total transmitted: ' + receivedKBits +
-        ' kilo-bits in ' + elapsedTime + ' seconds.');
+    if (this.stopSending && this.sentPayloadBytes === this.receivedPayloadBytes) {
+      this.connection.close();
+      const elapsedTime = Math.round((now - this.startTime) * 10) / 10000;
+      const receivedKBits = this.receivedPayloadBytes * 8 / 1000;
+      this.test.reportSuccess(`Total transmitted: ${receivedKBits} kilo-bits in ${elapsedTime} seconds.`);
       this.test.done();
     }
   }
-};
+}
 
 // Measures video bandwidth estimation performance by doing a loopback call via
 // relay candidates for 40 seconds. Computes rtt and bandwidth estimation
 // average and maximum as well as time to ramp up (defined as reaching 75% of
 // the max bitrate. It reports infinite time to ramp up if never reaches it.
-addTest(testSuiteName.THROUGHPUT, testCaseName.VIDEOBANDWIDTH, function(test) {
-  var videoBandwidthTest = new VideoBandwidthTest(test);
-  videoBandwidthTest.run();
-});
+// addTest(testSuiteName.THROUGHPUT, testCaseName.VIDEOBANDWIDTH, function(test) {
+//   var videoBandwidthTest = new VideoBandwidthTest(test);
+//   videoBandwidthTest.run();
+// });
 
-function VideoBandwidthTest(test) {
-  this.test = test;
-  this.maxVideoBitrateKbps = 2000;
-  this.durationMs = 40000;
-  this.statStepMs = 100;
-  this.bweStats = new StatisticsAggregate(0.75 * this.maxVideoBitrateKbps *
-    1000);
-  this.rttStats = new StatisticsAggregate();
-  this.packetsLost = null;
-  this.videoStats = [];
-  this.startTime = null;
-  this.call = null;
-  // Open the camera in 720p to get a correct measurement of ramp-up time.
-  this.constraints = {
-    audio: false,
-    video: {
-      optional: [
-        {minWidth: 1280},
-        {minHeight: 720}
-      ]
-    }
-  };
-}
+export class VideoBandwidthTest {
+  constructor() {
+    this.maxVideoBitrateKbps = 2000;
+    this.durationMs = 40000;
+    this.statStepMs = 100;
+    this.bweStats = new StatisticsAggregate(0.75 * this.maxVideoBitrateKbps * 1000);
+    this.rttStats = new StatisticsAggregate();
+    this.packetsLost = null;
+    this.videoStats = [];
+    this.startTime = null;
+    this.connection = null;
+    // Open the camera in 720p to get a correct measurement of ramp-up time.
+    this.constraints = {
+      audio: false,
+      video: {
+        optional: [
+          {minWidth: 1280},
+          {minHeight: 720}
+        ]
+      }
+    };
+  }
 
-VideoBandwidthTest.prototype = {
-  run: function() {
-    Call.asyncCreateTurnConfig(this.start.bind(this),
-      this.test.reportFatal.bind(this.test));
-  },
+  run() {
+    Connection.createTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
+  }
 
-  start: function(config) {
-    this.call = new Call(config, this.test);
-    this.call.setIceCandidateFilter(Call.isRelay);
+  start(config) {
+    this.connection = new Call(config, this.test);
+    this.connection.setIceCandidateFilter(Connection.isType.bind(Call, 'relay'));
     // FEC makes it hard to study bandwidth estimation since there seems to be
     // a spike when it is enabled and disabled. Disable it for now. FEC issue
     // tracked on: https://code.google.com/p/webrtc/issues/detail?id=3050
-    this.call.disableVideoFec();
-    this.call.constrainVideoBitrate(this.maxVideoBitrateKbps);
+    this.connection.disableVideoFec();
+    this.connection.constrainVideoBitrate(this.maxVideoBitrateKbps);
     doGetUserMedia(this.constraints, this.gotStream.bind(this));
-  },
+  }
 
-  gotStream: function(stream) {
-    this.call.pc1.addStream(stream);
-    this.call.establishConnection();
+  gotStream(stream) {
+    this.connection.pc1.addStream(stream);
+    this.connection.establishConnection();
     this.startTime = new Date();
     this.localStream = stream.getVideoTracks()[0];
     setTimeout(this.gatherStats.bind(this), this.statStepMs);
-  },
+  }
 
-  gatherStats: function() {
-    var now = new Date();
+  gatherStats() {
+    const now = Date.now();
     if (now - this.startTime > this.durationMs) {
       this.test.setProgress(100);
       this.hangup();
       return;
-    } else if (!this.call.statsGatheringRunning) {
-      this.call.gatherStats(this.call.pc1, this.localStream,
-        this.gotStats.bind(this));
+    } else if (!this.connection.statsGatheringRunning) {
+      this.connection.gatherStats(this.connection.pc1, this.localStream, this.gotStats.bind(this));
     }
     this.test.setProgress((now - this.startTime) * 100 / this.durationMs);
     setTimeout(this.gatherStats.bind(this), this.statStepMs);
-  },
+  }
 
-  gotStats: function(response) {
+  gotStats(response) {
     // TODO: Remove browser specific stats gathering hack once adapter.js or
     // browsers converge on a standard.
     if (adapter.browserDetails.browser === 'chrome') {
@@ -223,17 +206,15 @@ VideoBandwidthTest.prototype = {
         ' are supported.');
     }
     this.completed();
-  },
+  }
 
-  hangup: function() {
-    this.call.pc1.getLocalStreams()[0].getTracks().forEach(function(track) {
-      track.stop();
-    });
-    this.call.close();
-    this.call = null;
-  },
+  hangup() {
+    this.connection.pc1.getLocalStreams()[0].getTracks().forEach((track : MediaStream) => track.stop());
+    this.connection.close();
+    this.connection = null;
+  }
 
-  completed: function() {
+  completed() {
     // TODO: Remove browser specific stats gathering hack once adapter.js or
     // browsers converge on a standard.
     if (adapter.browserDetails.browser === 'chrome') {
@@ -273,106 +254,4 @@ VideoBandwidthTest.prototype = {
 
     this.test.done();
   }
-};
-
-addExplicitTest(testSuiteName.THROUGHPUT, testCaseName.NETWORKLATENCY,
-  function(test) {
-    var wiFiPeriodicScanTest = new WiFiPeriodicScanTest(test,
-      Call.isNotHostCandidate);
-    wiFiPeriodicScanTest.run();
-  });
-
-addExplicitTest(testSuiteName.THROUGHPUT, testCaseName.NETWORKLATENCYRELAY,
-  function(test) {
-    var wiFiPeriodicScanTest = new WiFiPeriodicScanTest(test, Call.isRelay);
-    wiFiPeriodicScanTest.run();
-  });
-
-function WiFiPeriodicScanTest(test, candidateFilter) {
-  this.test = test;
-  this.candidateFilter = candidateFilter;
-  this.testDurationMs = 5 * 60 * 1000;
-  this.sendIntervalMs = 100;
-  this.delays = [];
-  this.recvTimeStamps = [];
-  this.running = false;
-  this.call = null;
-  this.senderChannel = null;
-  this.receiveChannel = null;
 }
-
-WiFiPeriodicScanTest.prototype = {
-  run: function() {
-    Call.asyncCreateTurnConfig(this.start.bind(this),
-      this.test.reportFatal.bind(this.test));
-  },
-
-  start: function(config) {
-    this.running = true;
-    this.call = new Call(config, this.test);
-    this.chart = this.test.createLineChart();
-    this.call.setIceCandidateFilter(this.candidateFilter);
-
-    this.senderChannel = this.call.pc1.createDataChannel({ordered: false,
-      maxRetransmits: 0});
-    this.senderChannel.addEventListener('open', this.send.bind(this));
-    this.call.pc2.addEventListener('datachannel',
-      this.onReceiverChannel.bind(this));
-    this.call.establishConnection();
-
-    setTimeoutWithProgressBar(this.finishTest.bind(this),
-      this.testDurationMs);
-  },
-
-  onReceiverChannel: function(event) {
-    this.receiveChannel = event.channel;
-    this.receiveChannel.addEventListener('message', this.receive.bind(this));
-  },
-
-  send: function() {
-    if (!this.running) return;
-    this.senderChannel.send('' + Date.now());
-    setTimeout(this.send.bind(this), this.sendIntervalMs);
-  },
-
-  receive: function(event) {
-    if (!this.running) {
-      return;
-    }
-    var sendTime = parseInt(event.data);
-    var delay = Date.now() - sendTime;
-    this.recvTimeStamps.push(sendTime);
-    this.delays.push(delay);
-    this.chart.addDatapoint(sendTime + delay, delay);
-  },
-
-  finishTest: function() {
-    report.traceEventInstant('periodic-delay', {delays: this.delays,
-      recvTimeStamps: this.recvTimeStamps});
-    this.running = false;
-    this.call.close();
-    this.call = null;
-    this.chart.parentElement.removeChild(this.chart);
-
-    var avg = arrayAverage(this.delays);
-    var max = arrayMax(this.delays);
-    var min = arrayMin(this.delays);
-    this.test.reportInfo('Average delay: ' + avg + ' ms.');
-    this.test.reportInfo('Min delay: ' + min + ' ms.');
-    this.test.reportInfo('Max delay: ' + max + ' ms.');
-
-    if (this.delays.length < 0.8 * this.testDurationMs / this.sendIntervalMs) {
-      this.test.reportError('Not enough samples gathered. Keep the page on ' +
-        ' the foreground while the test is running.');
-    } else {
-      this.test.reportSuccess('Collected ' + this.delays.length +
-        ' delay samples.');
-    }
-
-    if (max > (min + 100) * 2) {
-      this.test.reportError('There is a big difference between the min and ' +
-        'max delay of packets. Your network appears unstable.');
-    }
-    this.test.done();
-  }
-};

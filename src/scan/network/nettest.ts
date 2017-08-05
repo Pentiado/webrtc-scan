@@ -1,30 +1,45 @@
 import {names as eventNames} from '../events';
-import Call from '../Call';
+import Call from '../connection';
 
 // Test whether it can connect via UDP to a TURN server
 // Get a TURN config, and try to get a relay candidate using UDP.
-addTest(testSuiteName.NETWORK, testCaseName.UDPENABLED, function(test) {
-  var networkTest = new NetworkTest(test, 'udp', null, Call.isRelay);
-  networkTest.run();
-});
+// addTest(testSuiteName.NETWORK, testCaseName.UDPENABLED, function(test) {
+//   var networkTest = new NetworkTest(test, 'udp', null, Call.isType.bind(Call, 'relay'));
+//   networkTest.run();
+// });
 
 // Test whether it can connect via TCP to a TURN server
 // Get a TURN config, and try to get a relay candidate using TCP.
-addTest(testSuiteName.NETWORK, testCaseName.TCPENABLED, function(test) {
-  var networkTest = new NetworkTest(test, 'tcp', null, Call.isRelay);
-  networkTest.run();
-});
+// addTest(testSuiteName.NETWORK, testCaseName.TCPENABLED, function(test) {
+//   var networkTest = new NetworkTest(test, 'tcp', null, Call.isType.bind(Call, 'relay'));
+//   networkTest.run();
+// });
 
 // Test whether it is IPv6 enabled (TODO: test IPv6 to a destination).
 // Turn on IPv6, and try to get an IPv6 host candidate.
-addTest(testSuiteName.NETWORK, testCaseName.IPV6ENABLED, function(test) {
-  var params = {optional: [{googIPv6: true}]};
-  var networkTest = new NetworkTest(test, null, params, Call.isIpv6);
-  networkTest.run();
-});
+// addTest(testSuiteName.NETWORK, testCaseName.IPV6ENABLED, function(test) {
+//   var params = {optional: [{googIPv6: true}]};
+//   var networkTest = new NetworkTest(test, null, params, Call.isIpv6);
+//   networkTest.run();
+// });
 
+interface RTCIceCandidate {
+  readonly foundation: string;
+  readonly priority: number;
+  readonly ip: string;
+  readonly protocol: RTCIceProtocol;
+  readonly port: number;
+  readonly type: RTCIceCandidateType;
+  readonly tcpType?: RTCIceTcpCandidateType;
+  readonly relatedAddress?: string;
+  readonly relatedPort?: number;
+}
 
-class NetworkTest {
+interface RTCPeerConnectionIceEvent {
+  candidate: RTCIceCandidate
+}
+
+export default class NetworkTest {
   constructor(protocol, params, iceCandidateFilter) {
     this.protocol = protocol;
     this.params = params;
@@ -36,7 +51,7 @@ class NetworkTest {
     if (this.iceCandidateFilter.toString() === Call.isIpv6.toString()) {
       this.gatherCandidates(null, this.params, this.iceCandidateFilter);
     } else {
-      Call.asyncCreateTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
+      Call.createTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
     }
   }
 
@@ -72,7 +87,7 @@ class NetworkTest {
   // and ctor params |params|. Succeed if any candidates pass the |isGood|
   // check, fail if we complete gathering without any passing.
   gatherCandidates(config, params, isGood) {
-    let pc;
+    let pc : RTCPeerConnection;
     try {
       pc = new RTCPeerConnection(config, params);
     } catch (error) {
@@ -84,28 +99,25 @@ class NetworkTest {
           type: eventNames.ERROR,
           message: `Failed to create peer connection: ${error}`
         };
-      this.dispatch(type, message);
-      this.dispatch(eventNames.DONE);
+      console.log(type, message);
+      console.log(eventNames.DONE);
       return;
     }
 
     // In our candidate callback, stop if we get a candidate that passes
     // |isGood|.
-    pc.addEventListener('icecandidate', (e) => {
+    pc.addEventListener('icecandidate', (e : RTCPeerConnectionIceEvent) => {
       // Once we've decided, ignore future callbacks.
       if (e.currentTarget.signalingState === 'closed') return;
       if (e.candidate) {
-        const parsed = Call.parseCandidate(e.candidate.candidate);
         if (isGood(parsed)) {
-          this.dispatch(eventNames.SUCCESS,
-            `Gathered candidate of Type: ${parsed.type} Protocol: ${parsed.protocol} Address: ${parsed.address}`);
+          this.dispatch(eventNames.SUCCESS, `Gathered candidate of Type: ${e.candidate.type} 
+          Protocol: ${e.candidate.protocol} Address: ${e.candidate.relatedAddress}`);
           pc.close();
-          pc = null;
           this.dispatch({type: eventNames.DONE});
         }
       } else {
         pc.close();
-        pc = null;
         const action = params && params.optional[0].googIPv6 ?
           {
             type: eventNames.WARNING,
@@ -114,21 +126,20 @@ class NetworkTest {
           {
             type: eventNames.ERROR,
             message: 'Failed to gather specified candidates'
-          }
+          };
+
         this.dispatch(action);
         this.dispatch({type: eventNames.DONE});
       }
     });
 
-    this.createAudioOnlyReceiveOffer(pc);
+    NetworkTest.createAudioOnlyReceiveOffer(pc);
   }
 
   // Create an audio-only, recvonly offer, and setLD with it.
   // This will trigger candidate gathering.
-  createAudioOnlyReceiveOffer(pc) {
-    const noop = () => {};
-    pc
-      .createOffer({offerToReceiveAudio: 1})
-      .then((offer) => pc.setLocalDescription(offer).then(noop, noop), noop);
+  static async createAudioOnlyReceiveOffer(pc) {
+    const offer = await pc.createOffer({offerToReceiveAudio: 1});
+    await pc.setLocalDescription(offer);
   }
 }

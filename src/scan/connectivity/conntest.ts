@@ -6,13 +6,14 @@
  *  tree.
  */
 'use strict';
+import Call from "../connection";
 
 // Set up a datachannel between two peers through a relay
 // and verify data can be transmitted and received
 // (packets travel through the public internet)
 addTest(
     testSuiteName.CONNECTIVITY, testCaseName.RELAYCONNECTIVITY, function(test) {
-      var runConnectivityTest = new RunConnectivityTest(test, Call.isRelay);
+      var runConnectivityTest = new RunConnectivityTest(test, Call.isType('relay'));
       runConnectivityTest.run();
     });
 
@@ -21,7 +22,7 @@ addTest(
 // (packets should stay on the link if behind a router doing NAT)
 addTest(testSuiteName.CONNECTIVITY, testCaseName.REFLEXIVECONNECTIVITY,
     function(test) {
-      var runConnectivityTest = new RunConnectivityTest(test, Call.isReflexive);
+      var runConnectivityTest = new RunConnectivityTest(test, Call.isType.bind(Call, 'srflx'));
       runConnectivityTest.run();
     });
 
@@ -34,18 +35,17 @@ addTest(
       runConnectivityTest.start();
     });
 
-function RunConnectivityTest(test, iceCandidateFilter) {
-  this.test = test;
-  this.iceCandidateFilter = iceCandidateFilter;
-  this.timeout = null;
-  this.parsedCandidates = [];
-  this.call = null;
-}
+class RunConnectivityTest {
+  constructor(iceCandidateFilter) {
+    this.iceCandidateFilter = iceCandidateFilter;
+    this.timeout = null;
+    this.parsedCandidates = [];
+    this.call = null;
+  }
 
-RunConnectivityTest.prototype = {
   run() {
-    Call.asyncCreateTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
-  },
+    Call.createTurnConfig().then(this.start.bind(this), this.test.reportFatal.bind(this.test));
+  }
 
   start(config) {
     this.call = new Call(config, this.test);
@@ -53,17 +53,16 @@ RunConnectivityTest.prototype = {
 
     // Collect all candidates for validation.
     this.call.pc1.addEventListener('icecandidate', (event) => {
-      if (event.candidate) {
-        var parsedCandidate = Call.parseCandidate(event.candidate.candidate);
-        this.parsedCandidates.push(parsedCandidate);
+      if (!event.candidate) return;
+      const parsedCandidate = Call.parseCandidate(event.candidate.candidate);
+      this.parsedCandidates.push(parsedCandidate);
 
-        // Report candidate info based on iceCandidateFilter.
-        if (this.iceCandidateFilter(parsedCandidate)) {
-          this.test.reportInfo(
-              'Gathered candidate of Type: ' + parsedCandidate.type +
-            ' Protocol: ' + parsedCandidate.protocol +
-            ' Address: ' + parsedCandidate.address);
-        }
+      // Report candidate info based on iceCandidateFilter.
+      if (this.iceCandidateFilter(parsedCandidate)) {
+        this.test.reportInfo(
+          'Gathered candidate of Type: ' + parsedCandidate.type +
+          ' Protocol: ' + parsedCandidate.protocol +
+          ' Address: ' + parsedCandidate.address);
       }
     });
 
@@ -89,7 +88,7 @@ RunConnectivityTest.prototype = {
     });
     this.call.establishConnection();
     this.timeout = setTimeout(this.hangup.bind(this, 'Timed out'), 5000);
-  },
+  }
 
   findParsedCandidateOfSpecifiedType(candidateTypeMethod) {
     for (var candidate in this.parsedCandidates) {
@@ -97,16 +96,16 @@ RunConnectivityTest.prototype = {
         return candidateTypeMethod(this.parsedCandidates[candidate]);
       }
     }
-  },
+  }
 
-  hangup(errorMessage) {
+  hangup(errorMessage : string) {
     if (errorMessage) {
       // Report warning for server reflexive test if it times out.
       if (errorMessage === 'Timed out' &&
-          this.iceCandidateFilter.toString() === Call.isReflexive.toString() &&
-          this.findParsedCandidateOfSpecifiedType(Call.isReflexive)) {
+        this.iceCandidateFilter.toString() === Call.isReflexive.toString() &&
+        this.findParsedCandidateOfSpecifiedType(Call.isReflexive)) {
         this.test.reportWarning('Could not connect using reflexive ' +
-            'candidates, likely due to the network environment/configuration.');
+          'candidates, likely due to the network environment/configuration.');
       } else {
         this.test.reportError(errorMessage);
       }
@@ -115,4 +114,5 @@ RunConnectivityTest.prototype = {
     this.call.close();
     this.test.done();
   }
-};
+}
+
