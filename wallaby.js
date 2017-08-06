@@ -7,10 +7,10 @@ const webpackPostprocessor = wallabyWebpack({
 });
 
 module.exports = function () {
-
   return {
     files: [
-      { pattern: 'src/scan/audio/*', load: false }
+      { pattern: 'src/scan/test.ts', load: false },
+      { pattern: 'src/scan/audio/*', load: false },
     ],
 
     tests: [
@@ -23,8 +23,25 @@ module.exports = function () {
       window.__moduleBundler.loadTests();
     },
     env: {
-      kind: 'chrome'
+      kind: 'chrome',
+      params: {
+        runner: [
+          '--headless',
+          '--disable-gpu',
+          '--disable-translate',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--safebrowsing-disable-auto-update',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--disable-default-apps',
+          '--no-first-run',
+          '--use-fake-ui-for-media-stream',
+          '--use-fake-device-for-media-stream',
+          '--enable-experimental-web-platform-features'
+        ].join(' ')
+      }
     },
-    testFramework: 'mocha'
+    testFramework: 'mocha',
   };
 };

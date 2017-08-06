@@ -1,42 +1,37 @@
+import Test from '../test';
+
 // Global WebAudio context that can be shared by all tests.
 // There is a very finite number of WebAudio contexts.
-
 let audioContext : AudioContext;
 try {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   audioContext = new AudioContext();
 } catch (e) {
-  console.log('Failed to instantiate an audio context, error: ' + e);
+  this.log('Failed to instantiate an audio context, error: ' + e);
 }
 
-/*
-addTest(testSuiteName.MICROPHONE, testCaseName.AUDIOCAPTURE, function(test) {
-  var micTest = new MicTest(test);
-  micTest.run();
-});
-*/
-
 interface AudioTestConfig {
-  inputChannelCount: number,
-  outputChannelCount: number,
-  bufferSize: number,
+  inputChannelCount?: number,
+  outputChannelCount?: number,
+  bufferSize?: number,
   // Turning off echoCancellation constraint enables stereo input.
-  constraints: MediaStreamConstraints,
+  constraints?: MediaStreamConstraints,
 
-  collectSeconds: number,
+  collectSeconds?: number,
   // At least one LSB 16-bit data (compare is on absolute value).
-  silentThreshold: number,
-  lowVolumeThreshold: number,
+  silentThreshold?: number,
+  lowVolumeThreshold?: number,
   // Data must be identical within one LSB 16-bit to be identified as mono.
-  monoDetectThreshold: number,
+  monoDetectThreshold?: number,
   // Number of consequtive clipThreshold level samples that indicate clipping.
-  clipCountThreshold: number,
-  clipThreshold: number,
+  clipCountThreshold?: number,
+  clipThreshold?: number,
+  testTimeout?: number,
 }
 
 interface ChannelStats { maxPeak: number, maxRms: number, clipCount: number, maxClipCount: number }
 
-export class AudioTest {
+export class AudioTest extends Test {
   private config : AudioTestConfig = {
     inputChannelCount: 6,
     outputChannelCount: 2,
@@ -48,57 +43,66 @@ export class AudioTest {
     monoDetectThreshold: 1.0 / 65536,
     clipCountThreshold: 6,
     clipThreshold: 1.0,
+    testTimeout: 5000,
   };
 
-  // Populated with audio as a 3-dimensional array: collectedAudio[channels][buffers][samples]
-  private collectedAudio : Float32Array[][];
-  private collectedSampleCount : number;
-  private stream : MediaStream;
-  private audioSource : any;
-  private scriptNode : any;
-
-  constructor(config : AudioTestConfig) {
+  constructor(config?: AudioTestConfig) {
+    super();
     this.config = {...this.config, ...config};
   }
 
-  async run() {
-    this.collectedSampleCount = 0;
-    this.collectedAudio = new Array(this.config.inputChannelCount).fill([]);
+  async run(_stream : MediaStream) {
+    this.start();
     if (audioContext) {
-      const stream = await navigator.mediaDevices.getUserMedia(this.config.constraints);
-      if (!this.checkAudioTracks(stream)) return console.log('done');
-      this.createAudioBuffer(stream);
+      const stream = _stream || await navigator.mediaDevices.getUserMedia(this.config.constraints);
+
+      if (this.checkAudioTracks(stream)) {
+        const collectedAudio = await this.createAudioBuffer(stream);
+        this.analyzeAudio(collectedAudio);
+      }
     } else {
-      console.log('error', 'WebAudio is not supported, test cannot run.');
-      console.log('done');
+      this.log('error', 'WebAudio is not supported, test cannot run.');
     }
+    this.done();
   }
 
-  checkAudioTracks(stream) {
+  checkAudioTracks(stream : MediaStream) : boolean {
     const audioTracks = stream.getAudioTracks();
-    if (audioTracks.length < 1) {
-      console.log(eventNames.ERROR, 'No audio track in returned stream.');
-      return false;
-    }
-    console.log(eventNames.SUCCESS, `Audio track created using device=${audioTracks[0].label}`);
-    return true;
+    const [level, message] = audioTracks.length ?
+      ['success', `Audio track created using device=${audioTracks[0].label}`]
+      : ['error', 'No audio track in returned stream.'];
+    this.log(level, message);
+    return !!audioTracks.length;
   }
 
-  createAudioBuffer(stream : MediaStream) {
-    this.stream = stream;
-    this.audioSource = audioContext.createMediaStreamSource(this.stream);
-    this.scriptNode = audioContext.createScriptProcessor(this.config.bufferSize, this.config.inputChannelCount,
+  async createAudioBuffer(stream : MediaStream) : Float32Array[][] {
+    const audioSource = audioContext.createMediaStreamSource(stream);
+    const scriptNode = audioContext.createScriptProcessor(this.config.bufferSize, this.config.inputChannelCount,
       this.config.outputChannelCount);
-    this.audioSource.connect(this.scriptNode);
-    this.scriptNode.connect(audioContext.destination);
-    this.scriptNode.on('audioprocess', this.collectAudio.bind(this, () => {
-      clearTimeout(timer);
-      this.onStopCollectingAudio();
-    }));
-    const timer = setTimeout(this.onStopCollectingAudio.bind(this), 5000);
+    audioSource.connect(scriptNode);
+    scriptNode.connect(audioContext.destination);
+
+    const collectedAudio = await new Promise((resolve) => {
+      const result = {
+        collectedAudio: new Array(this.config.inputChannelCount).fill([]),
+        collectedSampleCount: 0,
+      };
+
+      const timer = setTimeout(resolve.bind(null, result.collectedAudio), this.config.testTimeout);
+      scriptNode.onaudioprocess = this.collectAudio.bind(this, result, () => {
+        clearTimeout(timer);
+        resolve(result.collectedAudio)
+      });
+    });
+
+    stream.getAudioTracks()[0].stop();
+    audioSource.disconnect(scriptNode);
+    scriptNode.disconnect(audioContext.destination);
+
+    return collectedAudio;
   }
 
-  collectAudio(stopCollectingAudio : Function, {inputBuffer} : any) {
+  collectAudio(result, stopCollectingAudio : Function, {inputBuffer} : any) {
     // Simple silence detection: check first and last sample of each channel in
     // the buffer. If both are below a threshold, the buffer is considered
     // silent.
@@ -122,21 +126,13 @@ export class AudioTest {
         // analysis doesn't have to care.
         newBuffer = new Float32Array(0);
       }
-      this.collectedAudio[c].push(newBuffer);
+      result.collectedAudio[c].push(newBuffer);
     }
 
     if (allSilent) return;
 
-    this.collectedSampleCount += sampleCount;
-    if ((this.collectedSampleCount / inputBuffer.sampleRate) >= this.collectSeconds) stopCollectingAudio();
-  }
-
-  private onStopCollectingAudio() {
-    this.stream.getAudioTracks()[0].stop();
-    this.audioSource.disconnect(this.scriptNode);
-    this.scriptNode.disconnect(audioContext.destination);
-    this.analyzeAudio(this.collectedAudio);
-    console.log(eventNames.DONE);
+    result.collectedSampleCount += sampleCount;
+    if ((result.collectedSampleCount / inputBuffer.sampleRate) >= this.config.collectSeconds) stopCollectingAudio();
   }
 
   analyzeAudio(channels : Float32Array[][]) {
@@ -147,27 +143,27 @@ export class AudioTest {
     activeChannels.forEach(({i, stats}) => {
         const dBPeak = AudioTest.dBFS(stats.maxPeak);
         const dBRms = AudioTest.dBFS(stats.maxRms);
-        console.log(`Channel ${i} levels: ${dBPeak.toFixed(1)} dB (peak), ${dBRms.toFixed(1)} dB (RMS)`);
+        this.log(`Channel ${i} levels: ${dBPeak.toFixed(1)} dB (peak), ${dBRms.toFixed(1)} dB (RMS)`);
         if (dBRms < this.config.lowVolumeThreshold) {
-          console.log(eventNames.ERROR, 'Microphone input level is low, increase input volume or move closer to the audio.');
+          this.log('error', 'Microphone input level is low, increase input volume or move closer to the audio.');
         }
         if (stats.maxClipCount > this.config.clipCountThreshold) {
-          console.log(eventNames.WARNING, 'Clipping detected! Microphone input level ' +
+          this.log('warning', 'Clipping detected! Microphone input level ' +
             'is high. Decrease input volume or move away from the audio.')
         }
       });
 
     if (!activeChannels.length) {
-      console.log(eventNames.ERROR, 'No active input channels detected. Microphone ' +
+      this.log('error', 'No active input channels detected. Microphone ' +
         'is most likely muted or broken, please check if muted in the ' +
         'sound settings or physically on the device. Then rerun the test.');
     } else {
-      console.log(eventNames.SUCCESS, `Active audio input channels: ${activeChannels.length}`)
+      this.log('success', `Active audio input channels: ${activeChannels.length}`)
     }
     if (activeChannels.length === 2) {
       const isMono = AudioTest.isMono(channels[activeChannels[0]].buffers, channels[activeChannels[1]].buffers,
         this.config.monoDetectThreshold);
-      console.log(eventNames.INFO, isMono ? 'Mono audio detected.' : 'Stereo audio detected.');
+      this.log('info', isMono ? 'Mono audio detected.' : 'Stereo audio detected.');
     }
   }
 
