@@ -3,20 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+  },
+  "devDependencies": {
     "@types/jest": "^20.0.5",
     "@types/node": "^8.0.17",
     "@types/react": "^15.6.0",
     "@types/react-dom": "^15.5.1",
+    "@types/webrtc": "^0.0.21",
+    "fork-ts-checker-webpack-plugin": "^0.2.7",
     "react": "^15.6.1",
     "react-dom": "^15.6.1",
-    "react-scripts-ts": "2.5.0"
+    "react-scripts-ts": "2.5.0",
+    "ts-loader": "^2.3.2",
+    "typescript": "^2.4.2",
+    "webpack": "^3.4.1",
+    "babel": "^6.23.0",
+    "wallaby-webpack": "^0.0.38"
   },
-  "devDependencies": {},
   "scripts": {
     "start": "react-scripts-ts start",
     "build": "react-scripts-ts build",
     "test": "react-scripts-ts test --env=jsdom",
     "eject": "react-scripts-ts eject",
-    "standard": "^10.0.2"
+    "standard": "^10.0.2",
+    "typescript": "^2.4.2"
   }
 }

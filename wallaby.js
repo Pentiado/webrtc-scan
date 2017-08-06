@@ -1,13 +1,30 @@
-module.exports = function (wallaby) {
+const wallabyWebpack = require('wallaby-webpack');
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
+const webpackPostprocessor = wallabyWebpack({
+  plugins: [
+    new ForkTsCheckerWebpackPlugin()
+  ]
+});
+
+module.exports = function () {
+
   return {
     files: [
-      'src/**/*.ts'
+      { pattern: 'src/scan/audio/*', load: false }
     ],
 
     tests: [
-      'test/**/*.spec.ts'
-    ]
-    // for node.js tests you need to set env property as well
-    // https://wallabyjs.com/docs/integration/node.html
-  }
-}
+      { pattern: 'test/**/*.spec.ts', load: false }
+    ],
+
+    postprocessor: webpackPostprocessor,
+
+    bootstrap: function () {
+      window.__moduleBundler.loadTests();
+    },
+    env: {
+      kind: 'chrome'
+    },
+    testFramework: 'mocha'
+  };
+};

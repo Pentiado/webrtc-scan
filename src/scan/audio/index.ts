@@ -36,9 +36,7 @@ interface AudioTestConfig {
 
 interface ChannelStats { maxPeak: number, maxRms: number, clipCount: number, maxClipCount: number }
 
-export default class AudioTest {
-  name = 'audio';
-
+export class AudioTest {
   private config : AudioTestConfig = {
     inputChannelCount: 6,
     outputChannelCount: 2,

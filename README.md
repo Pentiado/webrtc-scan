@@ -1,3 +1,18 @@
+scriptNode.onaudioprocess
+The onaudioprocess event handler of the ScriptProcessorNode interface represents the EventHandler to be called for the audioprocess event that is dispatched to ScriptProcessorNode node types. An event of type AudioProcessingEvent will be dispatched to the event handler.
+TODO: Audio logic needs to be completely rewritten
+
+new Float32Array
+Requires proper size on WebKit
+
+// MediaStreamTrack.muted property is not wired up in Chrome yet,
+It is already
+
+// parseCandidate is no longer necessary
+
+// gotStats_ in connection.ts for chrome and FF does the same thing
+
+
 This project was bootstrapped with [Create React App](https://github.com/facebookincubator/create-react-app).
 
 Below you will find some information on how to perform common tasks.<br>
