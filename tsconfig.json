@@ -1,14 +1,15 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "es5",
-    "noEmit": true
+    "target": "es2015",
+    "noEmit": true,
+    "lib": ["es2015"]
   },
   "exclude": [
     "node_modules"
   ],
   "files": [
-    "src/scan/audio/*",
+    "src/scan/",
     "test/**/*.spec.ts"
   ]
 }

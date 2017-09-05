@@ -1,5 +1,6 @@
 import StatisticsAggregate from './stats';
-import Connection from '../connection';
+import Connection from '../../connection';
+import Test from '../../test';
 
 // Creates a loopback via relay candidates and tries to send as many packets
 // with 1024 chars as possible while keeping dataChannel bufferedAmmount above
@@ -14,7 +15,7 @@ interface DataChannelThroughputConfig {
   maxNumberOfPacketsToSend: number
 }
 
-export class DataChannelThroughputTest {
+export class DataChannelThroughputTest extends Test {
   private config : DataChannelThroughputConfig = {
     testDurationSeconds: 5,
     maxNumberOfPacketsToSend: 1
@@ -25,7 +26,7 @@ export class DataChannelThroughputTest {
   private sentPayloadBytes = 0;
   private receivedPayloadBytes = 0;
   private stopSending = false;
-  private samplePacket = new Array(1024).fill('h').join('');
+  private samplePacket: any[] = new Array(1024).fill('h').join('');
 
   private senderChannel: any;
   private receiveChannel: any;
@@ -34,22 +35,26 @@ export class DataChannelThroughputTest {
   private lastReceivedPayloadBytes: number;
 
   constructor(config : DataChannelThroughputConfig) {
+    super();
     this.config = {...this.config, ...config};
   }
 
-  run() {
+  async run() {
     this.bytesToKeepBuffered = 1024 * this.config.maxNumberOfPacketsToSend;
     this.lastBitrateMeasureTime = 0;
     this.lastReceivedPayloadBytes = 0;
-    Connection.createTurnConfig().then(this.start.bind(this), this.test.reportFatal.bind(this.test));
-  }
 
-  start(config) {
-    this.connection = new Connection(config, 'relay');
-    this.senderChannel = this.connection.pc1.createDataChannel(null);
-    this.senderChannel.addEventListener('open', this.sendingStep.bind(this));
-    this.connection.pc2.addEventListener('datachannel', this.onReceiverChannel.bind(this));
-    this.connection.establishConnection();
+    try {
+      const config = await Connection.getTurnConfig();
+      this.connection = new Connection(config, {constrainOfferToRemoveVideoFec: true, type: 'relay'});
+      this.senderChannel = this.connection.pc1.createDataChannel(null);
+      this.senderChannel.addEventListener('open', this.sendingStep.bind(this));
+      this.connection.pc2.addEventListener('datachannel', this.onReceiverChannel.bind(this));
+      this.connection.establishConnection();
+    } catch (err) {
+      this.log('error', err);
+      this.done();
+    }
   }
 
   private onReceiverChannel(event : any) {
@@ -84,7 +89,7 @@ export class DataChannelThroughputTest {
     if (now - this.lastBitrateMeasureTime >= 1000) {
       const x = (this.receivedPayloadBytes - this.lastReceivedPayloadBytes) / (now - this.lastBitrateMeasureTime);
       const bitrate = Math.round(x * 1000 * 8) / 1000;
-      this.test.reportSuccess(`Transmitting at ${bitrate} kbps.`);
+      this.log('success', `Transmitting at ${bitrate} kbps.`);
       this.lastReceivedPayloadBytes = this.receivedPayloadBytes;
       this.lastBitrateMeasureTime = now;
     }
@@ -93,8 +98,9 @@ export class DataChannelThroughputTest {
       this.connection.close();
       const elapsedTime = Math.round((now - this.startTime) * 10) / 10000;
       const receivedKBits = this.receivedPayloadBytes * 8 / 1000;
-      this.test.reportSuccess(`Total transmitted: ${receivedKBits} kilo-bits in ${elapsedTime} seconds.`);
-      this.test.done();
+
+      this.log('success', `Total transmitted: ${receivedKBits} kilo-bits in ${elapsedTime} seconds.`);
+      this.done();
     }
   }
 }
@@ -108,42 +114,54 @@ export class DataChannelThroughputTest {
 //   videoBandwidthTest.run();
 // });
 
-export class VideoBandwidthTest {
-  constructor() {
-    this.maxVideoBitrateKbps = 2000;
-    this.durationMs = 40000;
-    this.statStepMs = 100;
-    this.bweStats = new StatisticsAggregate(0.75 * this.maxVideoBitrateKbps * 1000);
+export class VideoBandwidthTest extends Test {
+  private config = {
+    maxVideoBitrateKbps: 2000,
+    durationMs: 40000,
+    statStepMs: 100,
+  };
+
+  // Open the camera-test in 720p to get a correct measurement of ramp-up time.
+  private constraints = {
+    audio: false,
+    video: {
+      optional: [
+        {minWidth: 1280},
+        {minHeight: 720}
+      ]
+    }
+  };
+
+  private bweStats: StatisticsAggregate;
+  private rttStats: StatisticsAggregate;
+  private connection: Connection;
+
+  private packetsLost: Number;
+  private videoStats: [Number, Number];
+  private startTime: Number;
+
+  async run() {
+    this.bweStats = new StatisticsAggregate(0.75 * this.config.maxVideoBitrateKbps * 1000);
     this.rttStats = new StatisticsAggregate();
-    this.packetsLost = null;
-    this.videoStats = [];
+    this.packetsLost = 0;
+    this.videoStats = [0, 0];
     this.startTime = null;
     this.connection = null;
-    // Open the camera in 720p to get a correct measurement of ramp-up time.
-    this.constraints = {
-      audio: false,
-      video: {
-        optional: [
-          {minWidth: 1280},
-          {minHeight: 720}
-        ]
-      }
-    };
-  }
 
-  run() {
-    Connection.createTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
-  }
+    const config = await Connection.getTurnConfig();
+    this.connection = new Connection(config, {
+      type: 'relay',
+      constrainVideoBitrateKbps: this.config.maxVideoBitrateKbps,
+      // FEC makes it hard to study bandwidth estimation since there seems to be
+      // a spike when it is enabled and disabled. Disable it for now. FEC issue
+      // tracked on: https://code.google.com/p/webrtc/issues/detail?id=3050
+      // TODO: check if still valid
+      constrainOfferToRemoveVideoFec: true
+    });
 
-  start(config) {
-    this.connection = new Call(config, this.test);
-    this.connection.setIceCandidateFilter(Connection.isType.bind(Call, 'relay'));
-    // FEC makes it hard to study bandwidth estimation since there seems to be
-    // a spike when it is enabled and disabled. Disable it for now. FEC issue
-    // tracked on: https://code.google.com/p/webrtc/issues/detail?id=3050
-    this.connection.disableVideoFec();
-    this.connection.constrainVideoBitrate(this.maxVideoBitrateKbps);
     doGetUserMedia(this.constraints, this.gotStream.bind(this));
+
+    Connection.getTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
   }
 
   gotStream(stream) {
@@ -219,11 +237,11 @@ export class VideoBandwidthTest {
     // browsers converge on a standard.
     if (adapter.browserDetails.browser === 'chrome') {
       // Checking if greater than 2 because Chrome sometimes reports 2x2 when
-      // a camera starts but fails to deliver frames.
+      // a camera-test starts but fails to deliver frames.
       if (this.videoStats[0] < 2 && this.videoStats[1] < 2) {
         this.test.reportError('Camera failure: ' + this.videoStats[0] + 'x' +
           this.videoStats[1] + '. Cannot test bandwidth without a working ' +
-          ' camera.');
+          ' camera-test.');
       } else {
         this.test.reportSuccess('Video resolution: ' + this.videoStats[0] +
           'x' + this.videoStats[1]);
@@ -240,7 +258,7 @@ export class VideoBandwidthTest {
           parseInt(this.framerateMean));
       } else {
         this.test.reportError('Frame rate mean is 0, cannot test bandwidth ' +
-          'without a working camera.');
+          'without a working camera-test.');
       }
       this.test.reportInfo('Send bitrate mean: ' + parseInt(this.bitrateMean) +
         ' bps');

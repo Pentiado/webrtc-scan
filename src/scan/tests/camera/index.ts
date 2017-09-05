@@ -1,6 +1,7 @@
-import Call from '../connection';
+import Connection from '../../connection';
+import Test from '../../test';
 import VideoFrameChecker from './videoFrameChecker';
-import {arrayAverage, arrayMax, arrayMin} from '../util';
+import {arrayAverage, arrayMax, arrayMin} from '../../util';
 
 /*
  * In generic cameras using Chrome rescaler, all resolutions should be supported
@@ -43,15 +44,16 @@ import {arrayAverage, arrayMax, arrayMin} from '../util';
 //       camResolutionsTest.run();
 //     });
 
-export default class ResolutionTest {
+export default class CameraTest extends Test {
   private currentResolution = 0;
   private isShuttingDown = false;
 
   constructor(private resolutions : [[number]]) {
+    super();
   }
 
-  run() {
-    this.startGetUserMedia(this.resolutions[this.currentResolution]);
+  async run() {
+    await this.startGetUserMedia(this.resolutions[this.currentResolution]);
   }
 
   async startGetUserMedia(resolution : [number]) {
@@ -70,27 +72,24 @@ export default class ResolutionTest {
       }
     } catch (error) {
       if (this.resolutions.length > 1) {
-        console.info('info', `${resolution[0]} x ${resolution[1]} not supported`);
+        this.log('info', `${resolution[0]} x ${resolution[1]} not supported`);
       } else {
-        console.error('error', `getUserMedia failed with error: ${error.name}`);
+        this.log('error', `getUserMedia failed with error: ${error.name}`);
       }
 
-      this.maybeContinueGetUserMedia();
+      await this.maybeContinueGetUserMedia();
     }
   }
 
-  private maybeContinueGetUserMedia() {
-    if (this.currentResolution === this.resolutions.length) {
-      console.log('done');
-      return;
-    }
-    this.startGetUserMedia(this.resolutions[this.currentResolution++]);
+  private async maybeContinueGetUserMedia() {
+    if (this.currentResolution === this.resolutions.length) return this.done();
+    await this.startGetUserMedia(this.resolutions[this.currentResolution++]);
   }
 
   private collectAndAnalyzeStats(stream : MediaStream, resolution : number[]) {
     const tracks = stream.getVideoTracks();
     if (tracks.length < 1) {
-      console.error('error', 'No video track in returned stream.');
+      this.log('error', 'No video track in returned stream.');
       this.maybeContinueGetUserMedia();
       return;
     }
@@ -98,17 +97,17 @@ export default class ResolutionTest {
     const videoTrack = tracks[0];
     videoTrack.onended = () => {
       if (this.isShuttingDown) return;
-      console.error('error', 'Video track ended, camera stopped working');
+      this.log('error', 'Video track ended, camera-test stopped working');
     };
 
     videoTrack.onmute = () => {
       if (this.isShuttingDown) return;
-      console.warn('warn', 'Your camera reported itself as muted.');
+      this.log('warn', 'Your camera-test reported itself as muted.');
     };
 
     videoTrack.onunmute = () => {
       if (this.isShuttingDown) return;
-      console.info('info', 'Your camera reported itself as unmuted.');
+      this.log('info', 'Your camera-test reported itself as unmuted.');
     };
 
     const video = document.createElement('video');
@@ -118,11 +117,11 @@ export default class ResolutionTest {
     video.height = resolution[1];
     video.srcObject = stream;
     const frameChecker = new VideoFrameChecker(video);
-    const call = new Call();
-    call.pc1.addStream(stream);
-    call.establishConnection();
-    call.gatherStats(call.pc1, stream, this.onCallEnded.bind(this, resolution, video, stream, frameChecker), 100);
-    setTimeout(this.endCall.bind(this, call, stream), 8000);
+    const connection = new Connection();
+    connection.pc1.addStream(stream);
+    connection.establishConnection();
+    connection.gatherStats(connection.pc1, stream, this.onCallEnded.bind(this, resolution, video, stream, frameChecker), 100);
+    setTimeout(this.endCall.bind(this, connection, stream), 8000);
   }
 
   private onCallEnded(resolution, videoElement, stream, frameChecker, stats, statsTime) {
@@ -132,22 +131,19 @@ export default class ResolutionTest {
   }
 
   private analyzeStats(resolution, videoElement, stream, frameChecker, stats, statsTime) {
-    var googAvgEncodeTime = [];
-    var googAvgFrameRateInput = [];
-    var googAvgFrameRateSent = [];
-    var statsReport = {};
-    var frameStats = frameChecker.frameStats;
+    const googAvgEncodeTime: number[] = [];
+    const googAvgFrameRateInput: number[] = [];
+    const googAvgFrameRateSent: number[] = [];
+    const statsReport : any = {};
+    const frameStats = frameChecker.frameStats;
 
     for (var index in stats) {
       if (stats[index].type === 'ssrc') {
         // Make sure to only capture stats after the encoder is setup.
         if (parseInt(stats[index].googFrameRateInput) > 0) {
-          googAvgEncodeTime.push(
-            parseInt(stats[index].googAvgEncodeMs));
-          googAvgFrameRateInput.push(
-            parseInt(stats[index].googFrameRateInput));
-          googAvgFrameRateSent.push(
-            parseInt(stats[index].googFrameRateSent));
+          googAvgEncodeTime.push(parseInt(stats[index].googAvgEncodeMs));
+          googAvgFrameRateInput.push(parseInt(stats[index].googFrameRateInput));
+          googAvgFrameRateSent.push(parseInt(stats[index].googFrameRateSent));
         }
       }
     }
@@ -209,18 +205,18 @@ export default class ResolutionTest {
     // TODO something feels odd with info object
     const notAvailableStats = Object.keys(info).filter((key) => {
       const isAvailable = !(typeof info[key] === 'number' && isNaN(info[key]));
-      if (isAvailable) console.info('info', key + ': ' + info[key]);
+      if (isAvailable) this.log('info', key + ': ' + info[key]);
       return !isAvailable;
     }, []);
 
     if (notAvailableStats.length) {
-      console.info('info', 'Not available: ' + notAvailableStats.join(', '));
+      this.log('info', 'Not available: ' + notAvailableStats.join(', '));
     }
 
     if (isNaN(info.avgSentFps)) {
-      console.info('info', 'Cannot verify sent FPS.');
+      this.log('info', 'Cannot verify sent FPS.');
     } else if (info.avgSentFps < 5) {
-      console.error('error', 'Low average sent FPS: ' + info.avgSentFps);
+      this.log('error', 'Low average sent FPS: ' + info.avgSentFps);
     } else {
       console.log('success', 'Average FPS above threshold');
     }
@@ -228,18 +224,18 @@ export default class ResolutionTest {
     if (!ResolutionTest.resolutionMatchesIndependentOfRotationOrCrop(
         info.actualVideoWidth, info.actualVideoHeight, info.mandatoryWidth,
         info.mandatoryHeight)) {
-      console.error('error', 'Incorrect captured resolution.');
+      this.log('error', 'Incorrect captured resolution.');
     } else {
       console.log('success', 'Captured video using expected resolution.');
     }
     if (!info.testedFrames) {
-      console.error('error', 'Could not analyze any video frame.');
+      this.log('error', 'Could not analyze any video frame.');
     } else {
       if (info.blackFrames > info.testedFrames / 3) {
-        console.error('error', 'Camera delivering lots of black frames.');
+        this.log('error', 'Camera delivering lots of black frames.');
       }
       if (info.frozenFrames > info.testedFrames / 3) {
-        console.error('error', 'Camera delivering lots of frozen frames.');
+        this.log('error', 'Camera delivering lots of frozen frames.');
       }
     }
   }

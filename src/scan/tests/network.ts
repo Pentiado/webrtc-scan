@@ -1,5 +1,5 @@
-import {names as eventNames} from '../events';
-import Call from '../connection';
+import Connection from '../connection';
+import Test from '../test';
 
 // Test whether it can connect via UDP to a TURN server
 // Get a TURN config, and try to get a relay candidate using UDP.
@@ -39,33 +39,40 @@ interface RTCPeerConnectionIceEvent {
   candidate: RTCIceCandidate
 }
 
-export default class NetworkTest {
-  constructor(protocol, params, iceCandidateFilter) {
-    this.protocol = protocol;
-    this.params = params;
-    this.iceCandidateFilter = iceCandidateFilter;
+interface NetworkTestConfig {
+  protocol?: string,
+  params?: any,
+  type: string,
+}
+
+export default class NetworkTest extends Test {
+  private config: NetworkTestConfig;
+
+  constructor(config, iceCandidateFilter) {
+    super();
+    this.config = {...this.config, ...config};
   }
 
-  run() {
-    // Do not create turn config for IPV6 test.
-    if (this.iceCandidateFilter.toString() === Call.isIpv6.toString()) {
-      this.gatherCandidates(null, this.params, this.iceCandidateFilter);
-    } else {
-      Call.createTurnConfig(this.start.bind(this), this.test.reportFatal.bind(this.test));
+  async run() {
+    try {
+      let config;
+      if (this.config.type !== 'ipv6') {
+        config = await Connection.getTurnConfig();
+        config = {...config, iceServers: this.filterIceServers(config.iceServers, this.config.protocol)};
+      }
+
+      this.gatherCandidates(config, this.config.params);
+    } catch (error) {
+      this.reportFatal('run', error);
     }
-  }
-
-  start(config) {
-    this.filterConfig(config, this.protocol);
-    this.gatherCandidates(config, this.params, this.iceCandidateFilter);
   }
 
   // Filter the RTCConfiguration |config| to only contain URLs with the
   // specified transport protocol |protocol|. If no turn transport is
   // specified it is added with the requested protocol.
-  filterConfig(config, protocol) {
+  private filterIceServers(iceServers, protocol) {
     const transport = `transport=${protocol}`;
-    config.iceServers = config.iceServers.reduce((newIceServers, iceServer) => {
+    return iceServers.reduce((newIceServers, iceServer) => {
       const newUrls = iceServer.urls.reduce((newUrls, uri) => {
         if (uri.includes(transport)) {
           newUrls.push(uri);
@@ -86,54 +93,42 @@ export default class NetworkTest {
   // Create a PeerConnection, and gather candidates using RTCConfig |config|
   // and ctor params |params|. Succeed if any candidates pass the |isGood|
   // check, fail if we complete gathering without any passing.
-  gatherCandidates(config, params, isGood) {
+  private async gatherCandidates(config, params) {
     let pc : RTCPeerConnection;
     try {
       pc = new RTCPeerConnection(config, params);
     } catch (error) {
-      const {type, message} = params && params.optional[0].googIPv6 ?
-        {
-          type: eventNames.WARNING,
-          message: 'Failed to create peer connection, IPv6 might not be setup/supported on the network.'} :
-        {
-          type: eventNames.ERROR,
-          message: `Failed to create peer connection: ${error}`
-        };
-      console.log(type, message);
-      console.log(eventNames.DONE);
+      const [type, message] = params && params.optional[0].googIPv6 ?
+        ['warning', 'Failed to create peer connection, IPv6 might not be setup/supported on the network.']
+        : ['error', `Failed to create peer connection: ${error}`];
+
+      this.log(type, message);
+      this.done();
       return;
     }
 
-    // In our candidate callback, stop if we get a candidate that passes
-    // |isGood|.
-    pc.addEventListener('icecandidate', (e : RTCPeerConnectionIceEvent) => {
-      // Once we've decided, ignore future callbacks.
-      if (e.currentTarget.signalingState === 'closed') return;
-      if (e.candidate) {
-        if (isGood(parsed)) {
-          this.dispatch(eventNames.SUCCESS, `Gathered candidate of Type: ${e.candidate.type} 
-          Protocol: ${e.candidate.protocol} Address: ${e.candidate.relatedAddress}`);
-          pc.close();
-          this.dispatch({type: eventNames.DONE});
-        }
-      } else {
-        pc.close();
-        const action = params && params.optional[0].googIPv6 ?
-          {
-            type: eventNames.WARNING,
-            message: 'Failed to gather IPv6 candidates, it might not be setup/supported on the network.'
-          } :
-          {
-            type: eventNames.ERROR,
-            message: 'Failed to gather specified candidates'
-          };
+    await Promise.all([
+      NetworkTest.createAudioOnlyReceiveOffer(pc),
+      new Promise((resolve) => {
+        pc.addEventListener('icecandidate', (e : RTCPeerConnectionIceEvent) => {
+          // Once we've decided, ignore future callbacks.
+          if (e.currentTarget.signalingState === 'closed') return;
+          if (e.candidate && Connection.isType(this.config.type, e.candidate)) {
+            this.log('success', `Gathered candidate of Type: ${e.candidate.type} Protocol: ${e.candidate.protocol} Address: ${e.candidate.relatedAddress}`);
+          } else {
+            const [level, message] = params && params.optional[0].googIPv6 ?
+              ['warning', 'Failed to gather IPv6 candidates, it might not be setup/supported on the network.'] :
+              ['error', 'Failed to gather specified candidates'];
+            this.log(level, message);
+          }
 
-        this.dispatch(action);
-        this.dispatch({type: eventNames.DONE});
-      }
-    });
+          resolve();
+        });
+      })
+    ]);
 
-    NetworkTest.createAudioOnlyReceiveOffer(pc);
+    pc.close();
+    this.done();
   }
 
   // Create an audio-only, recvonly offer, and setLD with it.

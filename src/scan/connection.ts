@@ -12,17 +12,23 @@ interface RTCIceCandidate {
   readonly relatedPort?: number;
 }
 
+interface ConnectionConfig {
+  constrainOfferToRemoveVideoFec?: boolean,
+  type?: string,
+
+  // Constraint max video bitrate by modifying the SDP when creating an answer.
+  constrainVideoBitrateKbps?: number,
+}
+
 export default class Connection {
   public pc1: RTCPeerConnection;
   public pc2: RTCPeerConnection;
 
   private statsGatheringRunning: boolean;
-  private constrainVideoBitrateKbps: number;
-  private constrainOfferToRemoveVideoFec: boolean;
+  private config: ConnectionConfig;
 
-  private iceCandidateFilter = () => true;
-
-  constructor(config, private type : string) {
+  constructor(config, connectionConfig: ConnectionConfig) {
+    this.config = {...this.config, ...connectionConfig};
     this.statsGatheringRunning = false;
 
     this.pc1 = new RTCPeerConnection(config);
@@ -32,8 +38,12 @@ export default class Connection {
     this.pc2.addEventListener('icecandidate', this.onIceCandidate.bind(this, this.pc1));
   }
 
-  establishConnection() {
-    this.pc1.createOffer().then(this.gotOffer.bind(this), this.test.reportFatal.bind(this.test));
+  // TODO: on error report Fatal
+  async establishConnection() {
+    const offer = await this.pc1.createOffer();
+    this.gotOffer(offer);
+    const answer = await this.pc2.createAnswer();
+    this.gotAnswer(answer);
   }
 
   close() {
@@ -41,19 +51,7 @@ export default class Connection {
     this.pc2.close();
   }
 
-  // Constraint max video bitrate by modifying the SDP when creating an answer.
-  constrainVideoBitrate(maxVideoBitrateKbps: number) {
-    this.constrainVideoBitrateKbps = maxVideoBitrateKbps;
-  }
-
-  // Remove video FEC if available on the offer.
-  disableVideoFec() {
-    this.constrainOfferToRemoveVideoFec = true;
-  }
-
-  // When the peerConnection is closed the statsCb is called once with an array
-  // of gathered stats.
-  async gatherStats(peerConnection : RTCPeerConnection, localStream : MediaStream, statsCb : Function) {
+  async gatherStats(peerConnection : RTCPeerConnection, localStream : MediaStream) {
     const stats : any[] = [];
     const statsCollectTime : number[] = [];
     const statStepMs = 100;
@@ -78,16 +76,18 @@ export default class Connection {
         await getStats();
       })();
     } catch (error) {
-      this.test.reportError('Could not gather stats: ' + error);
+      console.log('Could not gather stats: ', error);
+      // this.test.reportError('Could not gather stats: ' + error);
     }
     finally {
-      statsCb(stats, statsCollectTime);
       this.statsGatheringRunning = false;
+      return {stats, statsCollectTime};
     }
   }
 
-  private gotOffer(offer : any) {
-    if (this.constrainOfferToRemoveVideoFec) {
+  // TODO report fatal on error
+  private async gotOffer(offer : any) {
+    if (this.config.constrainOfferToRemoveVideoFec) {
       offer.sdp = offer.sdp.replace(/(m=video 1 [^\r]+)(116 117)(\r\n)/g,
         '$1\r\n');
       offer.sdp = offer.sdp.replace(/a=rtpmap:116 red\/90000\r\n/g, '');
@@ -97,92 +97,55 @@ export default class Connection {
     }
     this.pc1.setLocalDescription(offer);
     this.pc2.setRemoteDescription(offer);
-    return this.pc2.createAnswer().then(this.gotAnswer.bind(this), this.test.reportFatal.bind(this.test));
   }
 
   private gotAnswer(answer : any) {
-    if (this.constrainVideoBitrateKbps) {
+    if (this.config.constrainVideoBitrateKbps) {
       answer.sdp = answer.sdp.replace(
         /a=mid:video\r\n/g,
-        'a=mid:video\r\nb=AS:' + this.constrainVideoBitrateKbps + '\r\n');
+        'a=mid:video\r\nb=AS:' + this.config.constrainVideoBitrateKbps + '\r\n');
     }
     this.pc2.setLocalDescription(answer);
     this.pc1.setRemoteDescription(answer);
   }
 
   private onIceCandidate(otherPeer: RTCPeerConnection, event: RTCPeerConnectionIceEvent) {
-    if (!event.candidate || !Connection.isType(this.type, event.candidate)) return;
+    if (!event.candidate || !Connection.isType(this.config.type, event.candidate)) return;
     otherPeer.addIceCandidate(event.candidate);
   }
 
-  static isType = (type : string, candidate: RTCIceCandidate) => (type === 'ipv6') ?
-      (candidate.relatedAddress || '').includes(':')
-      : candidate.type === type;
+  static isType = (type : 'relay' | 'host' | 'not-host' | 'srflx' | 'ipv6', candidate: RTCIceCandidate) => {
+    switch (type) {
+      case 'ipv6':
+        return (candidate.relatedAddress || '').includes(':');
+      case 'not-host':
+        return candidate.type !== 'host';
+      default:
+        return candidate.type === type;
+    }
+  };
 
   // Store the ICE server response from the network traversal server.
-  static cachedIceServers: any;
-  // Keep track of when the request was made.
-  static cachedIceConfigFetchTime : number;
+  static cachedIceServers: RTCIceServer[];
 
   // Get a TURN config, either from settings or from network traversal server.
-  static async createTurnConfig() {
-    const settings = currentTest.settings;
-    let iceServers;
-    if (typeof(settings.turnURI) === 'string' && settings.turnURI !== '') {
-      iceServers = [{
-        'username': settings.turnUsername || '',
-        'credential': settings.turnCredential || '',
-        'urls': settings.turnURI.split(',')
-      }];
-    } else {
-      const response = await Call.fetchTurnConfig();
-      iceServers = response.iceServers;
-    }
-
-    const config = {iceServers};
-    report.traceEventInstant('turn-config', config);
-    return config;
+  static async getTurnConfig() {
+    if (!Connection.cachedIceServers) await Connection._fetchTurnConfig();
+    return Connection._getCachedIceCredentials();
   }
 
-  // Get a STUN config, either from settings or from network traversal server.
-  static async createStunConfig() {
-    const settings = currentTest.settings;
-    let iceServers;
-    if (typeof(settings.stunURI) === 'string' && settings.stunURI !== '') {
-      iceServers = [{'urls': settings.stunURI.split(',')}];
-    } else {
-      const response = await Call.fetchTurnConfig();
-      iceServers = response.iceServers.urls;
-    }
-
-    const config = {iceServers};
-    report.traceEventInstant('stun-config', config);
-    return config;
-  }
-
-  // Ask network traversal API to give us TURN server credentials and URLs.
-  static async fetchTurnConfig() {
-    // Check if credentials exist or have expired (and subtract testRuntTIme so
-    // that the test can finish if near the end of the lifetime duration).
-    // lifetimeDuration is in seconds.
-    const testRunTime = 240; // Time in seconds to allow a test run to complete.
-    if (Call.cachedIceServers) {
-      const isCachedIceConfigExpired = ((Date.now() - Call.cachedIceConfigFetchTime) / 1000 >
-          parseInt(Call.cachedIceServers.lifetimeDuration) - testRunTime);
-      if (!isCachedIceConfigExpired) {
-        report.traceEventInstant('fetch-ice-config', 'Using cached credentials.');
-        return Call.getCachedIceCredentials();
-      }
-    }
-
-    // API_KEY and TURN_URL is replaced with API_KEY environment variable via
-    const response = await fetch(TURN_URL + API_KEY, {method: 'POST'});
+  static async _fetchTurnConfig() {
+    const response = await fetch('https://global.xirsys.net/_turn/browser-scan/', {
+      method: 'PUT',
+      headers: new Headers({
+        Authorization: `Basic ${btoa("Pentiado:2034e852-922c-11e7-87dd-a0c7cc750054")}`
+      })
+    });
     if (response.status !== 200) throw new Error('TURN request failed');
-    Call.cachedIceServers = response.body;
-    Call.cachedIceConfigFetchTime = Date.now();
-    report.traceEventInstant('fetch-ice-config', 'Fetching new credentials.');
-    return Call.getCachedIceCredentials();
+    const body = await response.json();
+    Connection.cachedIceServers = body.v;
+    return body.v;
   }
 
-  static getCachedIceCredentials = () => Call.cachedIceServers && JSON.parse(JSON.stringify(Call.cachedIceServers))
+  static _getCachedIceCredentials = () => JSON.parse(JSON.stringify(Connection.cachedIceServers))
 }

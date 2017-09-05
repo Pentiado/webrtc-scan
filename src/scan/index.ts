@@ -1,4 +1,4 @@
-import AudioTest from './audio';
+import AudioTest from './tests/audio-test';
 
 const testCases = {
   AUDIOCAPTURE: 'Audio capture',

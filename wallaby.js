@@ -9,8 +9,7 @@ const webpackPostprocessor = wallabyWebpack({
 module.exports = function () {
   return {
     files: [
-      { pattern: 'src/scan/test.ts', load: false },
-      { pattern: 'src/scan/audio/*', load: false },
+      { pattern: 'src/scan/**/*', load: false },
     ],
 
     tests: [

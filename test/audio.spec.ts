@@ -1,16 +1,12 @@
 import {expect} from 'chai';
-import {AudioTest} from '../../src/scan/audio';
+import {AudioTest} from '../src/scan/tests/audio';
 import 'webrtc-adapter';
 
-describe('AudioTest', function () {
-  describe('', function () {
+describe.skip('AudioTest', function () {
+  describe('run', function () {
     it('should return error', async function () {
       const audioTest = new AudioTest({testTimeout: 1000});
       const audio = new Audio('http://localhost:8080/stereo.mp3');
-      await new Promise((resolve) => {
-        audio.oncanplay = resolve;
-      });
-      console.log(audio.readyState);
       const stream = audio.captureStream();
       await audioTest.run(stream);
       expect(audioTest.state).to.equal('error');

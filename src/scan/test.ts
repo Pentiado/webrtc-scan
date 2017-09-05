@@ -35,4 +35,9 @@ export default class Test {
   protected log(level, message) {
     this.logs.push({level, message});
   }
+
+  protected reportFatal(level, message) {
+    this.log(level, message);
+    this.done();
+  }
 }
