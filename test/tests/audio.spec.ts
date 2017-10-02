@@ -1,8 +1,8 @@
 import {expect} from 'chai';
-import {AudioTest} from '../src/scan/tests/audio';
+import {AudioTest} from '../../src/scan/tests/audio';
 import 'webrtc-adapter';
 
-describe.skip('AudioTest', function () {
+describe.only('AudioTest', function () {
   describe('run', function () {
     it('should return error', async function () {
       const audioTest = new AudioTest({testTimeout: 1000});

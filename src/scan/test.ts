@@ -1,3 +1,19 @@
+class EventEmitter {
+  events = {};
+
+  on(event, func) {
+    this.events[event] = this.events[event] || [];
+    this.events[event].push(func);
+    return () => {
+      this.events[event] = this.events[event].filter((f) => f !== func);
+    }
+  }
+
+  protected emit(event, data) {
+    this.events
+  }
+}
+
 interface Log {
   level: string,
   message: string,
@@ -9,8 +25,12 @@ export default class Test {
   logs: Log[] = [];
   report: any = {};
   state : 'running' | 'success' | 'warning' | 'error';
+  promise : Promise;
 
   protected start() {
+    this.promise = new Promise((resolve, reject) => {
+
+    });
     this.logs = [];
     this.report = {};
     this.state = 'running';
@@ -33,6 +53,7 @@ export default class Test {
   }
 
   protected log(level, message) {
+    console.log(level, message);
     this.logs.push({level, message});
   }
 

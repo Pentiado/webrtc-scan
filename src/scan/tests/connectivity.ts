@@ -35,7 +35,7 @@ interface ConnectivityTestConfig {
   type?: string,
 }
 
-export class ConnectivityTest extends Test {
+export default class ConnectivityTest extends Test {
   config: ConnectivityTestConfig;
   collectedCandidates: RTCIceCandidate[];
   connection: Connection;
@@ -48,6 +48,10 @@ export class ConnectivityTest extends Test {
 
   async run() {
     this.collectedCandidates = [];
+    let _resolve;
+    const donePromise = new Promise((resolve) => {
+      _resolve = resolve;
+    });
     try {
       const config = await Connection.getTurnConfig();
       this.connection = new Connection(config, {type: this.config.type});
@@ -73,20 +77,21 @@ export class ConnectivityTest extends Test {
           ['error', 'Invalid data transmitted.']
           : ['success', 'Data successfully transmitted between peers.'];
         this.log(level, message);
-        this.hangup();
+        this.hangup(null, _resolve);
       });
       this.connection.pc2.addEventListener('datachannel', (event: any) => {
         const ch2 = event.channel;
         ch2.addEventListener('message', (event: MessageEvent) => {
           if (event.data !== 'hello') {
-            this.hangup('Invalid data transmitted.');
+            this.hangup('Invalid data transmitted.', _resolve);
           } else {
             ch2.send('world');
           }
         });
       });
-      this.timeoutId = setTimeout(this.hangup.bind(this, 'Timed out'), 5000);
+      this.timeoutId = setTimeout(this.hangup.bind(this, 'Timed out', _resolve), 5000);
       await this.connection.establishConnection();
+      await donePromise;
     } catch (err) {
       this.reportFatal('error', err);
     }
@@ -96,7 +101,7 @@ export class ConnectivityTest extends Test {
     return this.collectedCandidates.find(Connection.isType.bind(null, type));
   }
 
-  hangup(errorMessage?: string) {
+  hangup(errorMessage?: string, resolve? : Function) {
     if (errorMessage) {
       // Report warning for server reflexive test if it times out.
       if (errorMessage === 'Timed out' && this.config.type === 'srflx' && this.findCandidate('srflx')) {
@@ -109,6 +114,7 @@ export class ConnectivityTest extends Test {
     clearTimeout(this.timeoutId);
     this.connection.close();
     this.done();
+    resolve();
   }
 }
 

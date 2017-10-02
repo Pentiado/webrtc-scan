@@ -220,8 +220,7 @@ export class VideoBandwidthTest extends Test {
         }
       }
     } else {
-      this.test.reportError('Only Firefox and Chrome getStats implementations' +
-        ' are supported.');
+      this.test.reportError('Only Firefox and Chrome getStats implementations are supported.');
     }
     this.completed();
   }

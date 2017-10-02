@@ -45,52 +45,30 @@ import {arrayAverage, arrayMax, arrayMin} from '../../util';
 //     });
 
 export default class CameraTest extends Test {
-  private currentResolution = 0;
   private isShuttingDown = false;
 
-  constructor(private resolutions : [[number]]) {
+  constructor(public resolution: [number, number]) {
     super();
   }
 
   async run() {
-    await this.startGetUserMedia(this.resolutions[this.currentResolution]);
-  }
-
-  async startGetUserMedia(resolution : [number]) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {width: {exact: resolution[0]}, height: {exact: resolution[1]}}
+        video: {width: {exact: this.resolution[0]}, height: {exact: this.resolution[1]}}
       });
       // Do not check actual video frames when more than one resolution is provided.
-      if (this.resolutions.length > 1) {
-        console.log('success', `Supported: ${resolution[0]} x ${resolution[1]}`);
-        stream.getTracks().forEach((track) => track.stop());
-        this.maybeContinueGetUserMedia();
-      } else {
-        this.collectAndAnalyzeStats(stream, resolution);
-      }
+      this.collectAndAnalyzeStats(stream, this.resolution);
     } catch (error) {
-      if (this.resolutions.length > 1) {
-        this.log('info', `${resolution[0]} x ${resolution[1]} not supported`);
-      } else {
-        this.log('error', `getUserMedia failed with error: ${error.name}`);
-      }
-
-      await this.maybeContinueGetUserMedia();
+      this.log('info', `${this.resolution[0]} x ${this.resolution[1]} not supported`);
+      this.log('error', `getUserMedia failed with error: ${error.name}`);
     }
-  }
-
-  private async maybeContinueGetUserMedia() {
-    if (this.currentResolution === this.resolutions.length) return this.done();
-    await this.startGetUserMedia(this.resolutions[this.currentResolution++]);
   }
 
   private collectAndAnalyzeStats(stream : MediaStream, resolution : number[]) {
     const tracks = stream.getVideoTracks();
     if (tracks.length < 1) {
       this.log('error', 'No video track in returned stream.');
-      this.maybeContinueGetUserMedia();
       return;
     }
 

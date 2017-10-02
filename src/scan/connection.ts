@@ -14,7 +14,7 @@ interface RTCIceCandidate {
 
 interface ConnectionConfig {
   constrainOfferToRemoveVideoFec?: boolean,
-  type?: string,
+  type?: RTCIceCandidateType,
 
   // Constraint max video bitrate by modifying the SDP when creating an answer.
   constrainVideoBitrateKbps?: number,
@@ -143,8 +143,10 @@ export default class Connection {
     });
     if (response.status !== 200) throw new Error('TURN request failed');
     const body = await response.json();
-    Connection.cachedIceServers = body.v;
-    return body.v;
+    const iceServers = body.v.iceServers.reduce((iceServers, {url, ...params}) =>
+      iceServers.concat({urls: url, ...params}), []);
+    Connection.cachedIceServers = iceServers;
+    return iceServers;
   }
 
   static _getCachedIceCredentials = () => JSON.parse(JSON.stringify(Connection.cachedIceServers))

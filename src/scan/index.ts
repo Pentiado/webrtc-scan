@@ -1,4 +1,4 @@
-import AudioTest from './tests/audio-test';
+// import AudioTest from './tests/audio';
 
 const testCases = {
   AUDIOCAPTURE: 'Audio capture',
@@ -15,8 +15,23 @@ const testCases = {
   VIDEOBANDWIDTH: 'Video bandwidth',
   RELAYCONNECTIVITY: 'Relay connectivity',
   REFLEXIVECONNECTIVITY: 'Reflexive connectivity',
-  HOSTCONNECTIVITY: 'Host connectivity'
+  HOSTCONNECTIVITY: 'Host connectivity',
+
+  microphone: [
+    {audioCapture: {}}
+  ],
+  camera: {},
+  network: {},
+  connectivity: {},
 };
+
+const cases = [
+  {type: 'throughput', tests: ['data', 'bandwitch']},
+  {type: 'resolution', tests: ['320x240', '640x480', '1280x720']},
+  {type: 'audio', tests: ['capture']},
+  {type: 'connectivity', tests: ['relay', 'reflexive', 'host']},
+  {type: 'network', tests: ['udp', 'tcp', 'ipv6']},
+];
 
 type EventsOptions = 'done' | 'update';
 
@@ -24,7 +39,6 @@ class WebRTCScan {
   static testCases = {
     audio: ['AUDIOCAPTURE'],
     video: ['CHECKRESOLUTION240', 'CHECKRESOLUTION480'],
-
   };
 
   private events = {};
@@ -55,3 +69,22 @@ class WebRTCScan {
   private emit(event : EventsOptions) {
   }
 }
+
+//---------------------------------
+
+const webRTCScan = new WebRTCScan(/*some config*/);
+
+webRTCScan.on('done', (result) => {
+  //  result is a json
+});
+
+webRTCScan.on('progress', ({type}) => {
+  // start and end of each separate test
+  // index.ts is responsible for this event
+});
+
+webRTCScan.on('log', () => {
+  //
+});
+
+WebRTCScan.run();

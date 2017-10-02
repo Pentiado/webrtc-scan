@@ -47,6 +47,7 @@ interface NetworkTestConfig {
 
 export default class NetworkTest extends Test {
   private config: NetworkTestConfig;
+  resolve: Function;
 
   constructor(config, iceCandidateFilter) {
     super();
@@ -54,40 +55,30 @@ export default class NetworkTest extends Test {
   }
 
   async run() {
+    const promise = new Promise((resolve) => {
+      this.resolve = resolve;
+    });
     try {
       let config;
       if (this.config.type !== 'ipv6') {
-        config = await Connection.getTurnConfig();
-        config = {...config, iceServers: this.filterIceServers(config.iceServers, this.config.protocol)};
+        const iceServers = await Connection.getTurnConfig();
+        config = {iceServers: this.filterIceServers(iceServers, this.config.protocol)};
+        console.log('config', config);
       }
 
       this.gatherCandidates(config, this.config.params);
+      await promise;
     } catch (error) {
+      console.log(error);
       this.reportFatal('run', error);
+      this.done();
     }
   }
 
   // Filter the RTCConfiguration |config| to only contain URLs with the
-  // specified transport protocol |protocol|. If no turn transport is
-  // specified it is added with the requested protocol.
+  // specified transport protocol |protocol|.
   private filterIceServers(iceServers, protocol) {
-    const transport = `transport=${protocol}`;
-    return iceServers.reduce((newIceServers, iceServer) => {
-      const newUrls = iceServer.urls.reduce((newUrls, uri) => {
-        if (uri.includes(transport)) {
-          newUrls.push(uri);
-        } else if (uri.includes('?transport=') && uri.startsWith('turn')) {
-          newUrls.push(uri + '?' + transport);
-        }
-      }, []);
-
-      if (newUrls.length) {
-        iceServer.urls = newUrls;
-        newIceServers.push(iceServer);
-      }
-
-      return newIceServers;
-    }, []);
+    return iceServers.filter(({urls}) => urls.includes(`transport=${protocol}`));
   }
 
   // Create a PeerConnection, and gather candidates using RTCConfig |config|
@@ -96,13 +87,14 @@ export default class NetworkTest extends Test {
   private async gatherCandidates(config, params) {
     let pc : RTCPeerConnection;
     try {
+      console.log('config', config);
       pc = new RTCPeerConnection(config, params);
     } catch (error) {
       const [type, message] = params && params.optional[0].googIPv6 ?
         ['warning', 'Failed to create peer connection, IPv6 might not be setup/supported on the network.']
         : ['error', `Failed to create peer connection: ${error}`];
-
       this.log(type, message);
+      this.resolve();
       this.done();
       return;
     }
@@ -115,19 +107,19 @@ export default class NetworkTest extends Test {
           if (e.currentTarget.signalingState === 'closed') return;
           if (e.candidate && Connection.isType(this.config.type, e.candidate)) {
             this.log('success', `Gathered candidate of Type: ${e.candidate.type} Protocol: ${e.candidate.protocol} Address: ${e.candidate.relatedAddress}`);
+            resolve();
           } else {
             const [level, message] = params && params.optional[0].googIPv6 ?
               ['warning', 'Failed to gather IPv6 candidates, it might not be setup/supported on the network.'] :
               ['error', 'Failed to gather specified candidates'];
             this.log(level, message);
           }
-
-          resolve();
         });
       })
     ]);
 
     pc.close();
+    this.resolve();
     this.done();
   }
 
